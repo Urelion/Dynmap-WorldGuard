@@ -163,7 +163,7 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
                     if (flagFilterValue instanceof Boolean) {
                         flagFilter = (Boolean)flagFilterValue;
                     }
-                } catch (JSONException e) {
+                } catch (JSONException ignored) {
                 }
             }
 
