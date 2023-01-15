@@ -12,6 +12,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 import com.sk89q.worldguard.protection.flags.registry.FlagConflictException;
+import com.google.common.base.Strings;
+import com.sk89q.worldguard.protection.flags.StringFlag;
+import com.sk89q.worldguard.protection.flags.registry.FlagConflictException;
 import org.bstats.bukkit.Metrics;
 import org.bukkit.Bukkit;
 import org.bukkit.configuration.ConfigurationSection;
@@ -43,6 +46,8 @@ import com.sk89q.worldguard.protection.regions.ProtectedPolygonalRegion;
 import com.sk89q.worldguard.protection.regions.ProtectedRegion;
 import com.sk89q.worldguard.protection.regions.RegionContainer;
 import com.sk89q.worldguard.protection.regions.RegionType;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import javax.annotation.Nullable;
 
@@ -51,11 +56,13 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
     private static final String DEF_INFOWINDOW = "<div class=\"infowindow\"><span style=\"font-size:120%;\">%regionname%</span><br /> Owner <span style=\"font-weight:bold;\">%playerowners%</span><br />Flags<br /><span style=\"font-weight:bold;\">%flags%</span></div>";
     public static final String BOOST_FLAG = "dynmap-boost";
     public static final String VISIBLE_FLAG = "dynmap-showonmap";
+    public static final String FLAGS_FILTER_FLAG = "dynmap-flags-filter";
     Plugin dynmap;
     DynmapAPI api;
     MarkerAPI markerapi;
     BooleanFlag boost_flag;
     BooleanFlag visible_flag;
+    StringFlag flags_filter_flag;
     int updatesPerTick = 20;
 
     FileConfiguration cfg;
@@ -73,6 +80,8 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
     int maxdepth;
     boolean vbfEnabled;
     boolean vbfHideByDefault;
+    boolean flagFilterEnabled;
+    boolean flagFilterHiddenByDefault;
 
     @Override
     public void onLoad() {
@@ -131,15 +140,45 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
         else
             v = v.replace("%parent%", "");
         v = v.replace("%priority%", String.valueOf(region.getPriority()));
-        Map<Flag<?>, Object> map = region.getFlags();
-        String flgs = "";
-        for(Flag<?> f : map.keySet()) {
-            flgs += f.getName() + ": " + map.get(f).toString() + "<br/>";
+
+        String               flagsFilter = region.getFlag(flags_filter_flag);
+        JSONObject           flagsJson   = StringFlagUtils.generateJson(
+                                               flagsFilter
+                                           );
+        Map<Flag<?>, Object> map         = region.getFlags();
+        StringBuilder        flgs        = new StringBuilder();
+        for (Flag<?> f : map.keySet()) {
+            String flagName = f.getName();
+
+            if (Strings.isNullOrEmpty(flagName)) {
+                continue;
+            }
+
+            boolean flagFilter = true;
+            if (flagFilterEnabled) {
+                flagFilter = !flagFilterHiddenByDefault;
+
+                try {
+                    Object flagFilterValue = flagsJson.get(flagName);
+                    if (flagFilterValue instanceof Boolean) {
+                        flagFilter = (Boolean)flagFilterValue;
+                    }
+                } catch (JSONException e) {
+                }
+            }
+
+            if (flagFilter) {
+                flgs.append(flagName);
+                flgs.append(": ");
+                flgs.append(map.get(f).toString());
+                flgs.append("<br/>");
+            }
         }
-        v = v.replace("%flags%", flgs);
+        v = v.replace("%flags%", flgs.toString());
+
         return v;
     }
-    
+
     private boolean isVisible(String id, String worldname) {
         if((visible != null) && (visible.size() > 0)) {
             if((visible.contains(id) == false) && (visible.contains("world:" + worldname) == false) &&
@@ -455,6 +494,17 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
         if (visible_flag == null) {
             log.info("Custom flag '" + VISIBLE_FLAG + "' not registered");
         }
+
+        try {
+            StringFlag flagsFilterFlag = new StringFlag(FLAGS_FILTER_FLAG);
+            fr.register(flagsFilterFlag);
+            flags_filter_flag = flagsFilterFlag;
+        } catch (FlagConflictException ex) {
+            log.info("Error registering flag - " + ex.getMessage());
+        }
+        if (flags_filter_flag == null) {
+            log.info("Custom flag '" + FLAGS_FILTER_FLAG + "' not registered");
+        }
     }
 
     private boolean reload = false;
@@ -503,6 +553,14 @@ public class DynmapWorldGuardPlugin extends JavaPlugin {
         vbfHideByDefault = cfg.getBoolean(
                 "visibility-by-flags.hide-by-default",
                 true
+        );
+        flagFilterEnabled         = cfg.getBoolean(
+                "flag-filter.enable",
+                false
+        );
+        flagFilterHiddenByDefault = cfg.getBoolean(
+                "flag-filter.hidden-by-default",
+                false
         );
 
         /* Get style information */
